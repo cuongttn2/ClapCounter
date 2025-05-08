@@ -11,94 +11,72 @@ import android.widget.ImageButton;
 import android.widget.Spinner;
 import android.widget.Toast;
 
-import androidx.annotation.RequiresPermission;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 
+import java.util.List;
+
 public class MainActivity2 extends AppCompatActivity {
-
-    private static final String TAG = "MorseDetector";
-    private static final double RMS_THRESHOLD = 3000.0;   // điều chỉnh tuỳ thiết bị
-    private static final long DOT_DURATION_MS = 200;      // dot = 200ms, dash = 600ms
-
+    private static final String TAG = "ClapSeq";
+    private static final double RMS_THRESHOLD = 3000.0; // điều chỉnh
+    private static final long PAUSE_THRESHOLD = 500;    // tĩnh lặng >500ms => tách đoạn
     final int RECORD_AUDIO = 0;
     private ImageButton btnStart;
     private Spinner spinDuration;
-    private MorseDetector morseDetector;
-    private StringBuilder decodedMessage = new StringBuilder();
-    private Handler uiHandler = new Handler(Looper.getMainLooper());
-
+    private Handler handler = new Handler(Looper.getMainLooper());
+    String[] durationItems = {"5", "10", "15", "20"};
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+    protected void onCreate(Bundle s) {
+        super.onCreate(s);
         setContentView(R.layout.activity_main);
-
         btnStart = findViewById(R.id.start);
         spinDuration = findViewById(R.id.duration);
-
-        // Thiết lập Spinner với các giá trị 5, 10, 15, 20 giây
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(
-                this,
-                android.R.layout.simple_spinner_item,
-                new String[]{"5", "10", "15", "20"}
-        );
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinDuration.setAdapter(adapter);
+        ArrayAdapter<String> spinDurationAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, durationItems);
+        spinDurationAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinDuration.setAdapter(spinDurationAdapter);
 
         btnStart.setOnClickListener(v -> {
             if (ActivityCompat.checkSelfPermission(MainActivity2.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(MainActivity2.this, new String[]{Manifest.permission.RECORD_AUDIO}, RECORD_AUDIO);
             } else {
-                int seconds = Integer.parseInt(
-                        spinDuration.getSelectedItem().toString()
-                );
-                startMorseDetection(seconds);
+                int secs = Integer.parseInt(spinDuration.getSelectedItem().toString());
+                startDetect(secs);
             }
         });
     }
 
-    @RequiresPermission(Manifest.permission.RECORD_AUDIO)
-    private void startMorseDetection(int durationSeconds) {
-        decodedMessage.setLength(0);
+    private void startDetect(int secs) {
         btnStart.setEnabled(false);
-        btnStart.setBackgroundResource(R.drawable.mic_on); // đổi icon khi lắng nghe
+        ClapSequenceDetector detector = new ClapSequenceDetector(
+                RMS_THRESHOLD,
+                PAUSE_THRESHOLD,
+                new SequenceListener() {
+                    @Override
+                    public void onSequence(List<Integer> segments) {
+                        Log.d(TAG, "Segments: " + segments);
+                        runOnUiThread(() -> {
+                            Toast.makeText(
+                                    MainActivity2.this,
+                                    "Pattern: " + segments,
+                                    Toast.LENGTH_LONG
+                            ).show();
+                            btnStart.setEnabled(true);
+                        });
+                    }
 
-        morseDetector = new MorseDetector(RMS_THRESHOLD, DOT_DURATION_MS);
-        morseDetector.start(new MorseDetector.Listener() {
-            @Override
-            public void onSymbol(char morseChar) {
-                decodedMessage.append(morseChar);
-                Log.d(TAG, "Detected symbol: " + morseChar);
-            }
-
-            @Override
-            public void onError(Exception e) {
-                Log.e(TAG, "Error in MorseDetector", e);
-                uiHandler.post(() ->
-                        Toast.makeText(MainActivity2.this,
-                                "Error: " + e.getMessage(),
-                                Toast.LENGTH_LONG).show()
-                );
-            }
-        });
-
-        // Tự động dừng sau N giây và hiển thị kết quả
-        uiHandler.postDelayed(() -> {
-            morseDetector.stop();
-            btnStart.setEnabled(true);
-            btnStart.setBackgroundResource(R.drawable.mic_off); // trả icon ban đầu
-            Log.d(TAG, "Final decoded message: " + decodedMessage);
-            Toast.makeText(MainActivity2.this,
-                    "Decoded: " + decodedMessage,
-                    Toast.LENGTH_LONG).show();
-        }, durationSeconds * 1000L);
+                    @Override
+                    public void onError(Exception e) {
+                        Log.e(TAG, "Error", e);
+                    }
+                }
+        );
+        detector.start();
+        handler.postDelayed(detector::stop, secs * 1000L);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        if (morseDetector != null) {
-            morseDetector.stop();
-        }
+        handler.removeCallbacksAndMessages(null);
     }
 }
